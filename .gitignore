@@ -30,3 +30,6 @@ vendor/
 .DS_Store
 Thumbs.db
 
+# Environment variables
+.env
+

@@ -1,18 +1,26 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
+
+	"github.com/joho/godotenv"
+	"github.com/Utkarsh736/chirpy/internal/database"
+	_ "github.com/lib/pq"
 )
 
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	db             *database.Queries
 }
+
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +117,27 @@ func cleanProfanity(text string) string {
 
 
 func main() {
-	apiCfg := &apiConfig{}
+	// Load .env file
+	godotenv.Load()
+	
+	dbURL := os.Getenv("DB_URL")
+	if dbURL == "" {
+		log.Fatal("DB_URL environment variable is not set")
+	}
+	
+	// Open database connection
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatal("Error opening database:", err)
+	}
+	
+	// Create database queries
+	dbQueries := database.New(db)
+	
+	// Initialize config with database
+	apiCfg := &apiConfig{
+		db: dbQueries,
+	}
 	
 	mux := http.NewServeMux()
 	
@@ -135,6 +163,7 @@ func main() {
 		Handler: mux,
 	}
 	
+	log.Printf("Starting server on %s", server.Addr)
 	server.ListenAndServe()
 }
 
