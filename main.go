@@ -419,6 +419,51 @@ func (cfg *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, 200, chirp)
 }
 
+func (cfg *apiConfig) handlerDeleteChirp(w http.ResponseWriter, r *http.Request) {
+	// Get and validate JWT
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	
+	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	
+	// Get chirp ID from path parameter
+	chirpIDString := r.PathValue("chirpID")
+	chirpID, err := uuid.Parse(chirpIDString)
+	if err != nil {
+		respondWithError(w, 400, "Invalid chirp ID")
+		return
+	}
+	
+	// Get the chirp to verify ownership
+	dbChirp, err := cfg.db.GetChirpByID(r.Context(), chirpID)
+	if err != nil {
+		respondWithError(w, 404, "Chirp not found")
+		return
+	}
+	
+	// Check if user owns the chirp
+	if dbChirp.UserID != userID {
+		respondWithError(w, 403, "Forbidden")
+		return
+	}
+	
+	// Delete the chirp
+	err = cfg.db.DeleteChirp(r.Context(), chirpID)
+	if err != nil {
+		respondWithError(w, 500, "Failed to delete chirp")
+		return
+	}
+	
+	// Return 204 No Content
+	w.WriteHeader(http.StatusNoContent)
+}
 
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
@@ -537,10 +582,11 @@ func main() {
 
 	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefresh)
 	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevoke)
+	
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirp)
-
 	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetChirp)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handlerDeleteChirp)
 	
 	// Admin endpoints
 	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerMetrics)
