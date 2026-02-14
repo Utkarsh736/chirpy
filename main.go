@@ -42,7 +42,9 @@ type apiConfig struct {
 	db             *database.Queries
 	platform       string
 	jwtSecret      string
+	polkaKey       string
 }
+
 
 
 
@@ -499,9 +501,21 @@ func (cfg *apiConfig) handlerWebhook(w http.ResponseWriter, r *http.Request) {
 		} `json:"data"`
 	}
 	
+	// Get and validate API key
+	apiKey, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	
+	if apiKey != cfg.polkaKey {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
-	err := decoder.Decode(&params)
+	err = decoder.Decode(&params)
 	if err != nil {
 		respondWithError(w, 400, "Invalid request")
 		return
@@ -523,6 +537,7 @@ func (cfg *apiConfig) handlerWebhook(w http.ResponseWriter, r *http.Request) {
 	// Return 204 No Content on success
 	w.WriteHeader(http.StatusNoContent)
 }
+
 
 
 func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
@@ -590,6 +605,11 @@ func main() {
 	if jwtSecret == "" {
 		log.Fatal("JWT_SECRET environment variable is not set")
 	}
+
+	polkaKey := os.Getenv("POLKA_KEY")
+	if polkaKey == "" {
+		log.Fatal("POLKA_KEY environment variable is not set")
+	}	
 	
 	// Open database connection
 	db, err := sql.Open("postgres", dbURL)
@@ -605,6 +625,7 @@ func main() {
 		db:        dbQueries,
 		platform:  platform,
 		jwtSecret: jwtSecret,
+		polkaKey:  polkaKey,
 	}
 	
 	mux := http.NewServeMux()
