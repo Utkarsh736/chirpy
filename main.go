@@ -35,19 +35,18 @@ func main() {
 	
 	mux := http.NewServeMux()
 	
-	// GET only endpoints
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+	// API endpoints (namespaced under /api)
+	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
 	
-	mux.HandleFunc("GET /metrics", apiCfg.handlerMetrics)
+	mux.HandleFunc("GET /api/metrics", apiCfg.handlerMetrics)
 	
-	// POST only endpoint
-	mux.HandleFunc("POST /reset", apiCfg.handlerReset)
+	mux.HandleFunc("POST /api/reset", apiCfg.handlerReset)
 	
-	// Fileserver with middleware
+	// Fileserver for web interface (stays at /app/)
 	fileServer := http.FileServer(http.Dir("."))
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", fileServer)))
 	
@@ -58,5 +57,6 @@ func main() {
 	
 	server.ListenAndServe()
 }
+
 
 
