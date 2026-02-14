@@ -9,17 +9,28 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/Utkarsh736/chirpy/internal/database"
 	_ "github.com/lib/pq"
 )
 
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+}
+
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	db             *database.Queries
+	platform       string
 }
+
 
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -44,11 +55,57 @@ func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(html))
 }
 
+func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Email string `json:"email"`
+	}
+	
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 400, "Invalid request")
+		return
+	}
+	
+	// Create user in database
+	dbUser, err := cfg.db.CreateUser(r.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, 500, "Failed to create user")
+		return
+	}
+	
+	// Map to response struct
+	user := User{
+		ID:        dbUser.ID,
+		CreatedAt: dbUser.CreatedAt,
+		UpdatedAt: dbUser.UpdatedAt,
+		Email:     dbUser.Email,
+	}
+	
+	respondWithJSON(w, 201, user)
+}
 
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
+	// Check if platform is dev
+	if cfg.platform != "dev" {
+		respondWithError(w, 403, "Forbidden")
+		return
+	}
+	
+	// Reset hits counter
 	cfg.fileserverHits.Store(0)
+	
+	// Delete all users
+	err := cfg.db.DeleteAllUsers(r.Context())
+	if err != nil {
+		respondWithError(w, 500, "Failed to reset database")
+		return
+	}
+	
 	w.WriteHeader(http.StatusOK)
 }
+
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
 	type errorResponse struct {
@@ -125,6 +182,11 @@ func main() {
 		log.Fatal("DB_URL environment variable is not set")
 	}
 	
+	platform := os.Getenv("PLATFORM")
+	if platform == "" {
+		log.Fatal("PLATFORM environment variable is not set")
+	}
+	
 	// Open database connection
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
@@ -136,7 +198,8 @@ func main() {
 	
 	// Initialize config with database
 	apiCfg := &apiConfig{
-		db: dbQueries,
+		db:       dbQueries,
+		platform: platform,
 	}
 	
 	mux := http.NewServeMux()
@@ -148,6 +211,7 @@ func main() {
 		w.Write([]byte("OK"))
 	})
 	
+	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)
 	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 	
 	// Admin endpoints
@@ -166,6 +230,7 @@ func main() {
 	log.Printf("Starting server on %s", server.Addr)
 	server.ListenAndServe()
 }
+
 
 
 
