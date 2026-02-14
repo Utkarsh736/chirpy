@@ -1,12 +1,17 @@
 package auth
 
 import (
+	"errors"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/alexedwards/argon2id"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
+
+
 
 // HashPassword hashes a password using Argon2id
 func HashPassword(password string) (string, error) {
@@ -75,4 +80,28 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	}
 	
 	return userID, nil
+}
+
+// GetBearerToken extracts the Bearer token from Authorization header
+func GetBearerToken(headers http.Header) (string, error) {
+	authHeader := headers.Get("Authorization")
+	if authHeader == "" {
+		return "", errors.New("authorization header not found")
+	}
+	
+	// Check if it starts with "Bearer "
+	const bearerPrefix = "Bearer "
+	if !strings.HasPrefix(authHeader, bearerPrefix) {
+		return "", errors.New("authorization header must start with Bearer")
+	}
+	
+	// Strip the "Bearer " prefix and trim whitespace
+	token := strings.TrimPrefix(authHeader, bearerPrefix)
+	token = strings.TrimSpace(token)
+	
+	if token == "" {
+		return "", errors.New("bearer token is empty")
+	}
+	
+	return token, nil
 }

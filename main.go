@@ -39,7 +39,9 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	db             *database.Queries
 	platform       string
+	jwtSecret      string
 }
+
 
 
 
@@ -109,8 +111,13 @@ func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 
 func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email            string `json:"email"`
+		Password         string `json:"password"`
+		ExpiresInSeconds *int   `json:"expires_in_seconds,omitempty"`
+	}
+	type response struct {
+		User
+		Token string `json:"token"`
 	}
 	
 	decoder := json.NewDecoder(r.Body)
@@ -135,16 +142,34 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// Return user without password
-	user := User{
-		ID:        dbUser.ID,
-		CreatedAt: dbUser.CreatedAt,
-		UpdatedAt: dbUser.UpdatedAt,
-		Email:     dbUser.Email,
+	// Determine expiration time
+	expiresIn := time.Hour // Default 1 hour
+	if params.ExpiresInSeconds != nil {
+		requestedExpiry := time.Duration(*params.ExpiresInSeconds) * time.Second
+		if requestedExpiry < expiresIn {
+			expiresIn = requestedExpiry
+		}
 	}
 	
-	respondWithJSON(w, 200, user)
+	// Create JWT
+	token, err := auth.MakeJWT(dbUser.ID, cfg.jwtSecret, expiresIn)
+	if err != nil {
+		respondWithError(w, 500, "Failed to create token")
+		return
+	}
+	
+	// Return user with token
+	respondWithJSON(w, 200, response{
+		User: User{
+			ID:        dbUser.ID,
+			CreatedAt: dbUser.CreatedAt,
+			UpdatedAt: dbUser.UpdatedAt,
+			Email:     dbUser.Email,
+		},
+		Token: token,
+	})
 }
+
 
 
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
@@ -169,13 +194,25 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Body   string    `json:"body"`
-		UserID uuid.UUID `json:"user_id"`
+		Body string `json:"body"`
+	}
+	
+	// Get and validate JWT
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	
+	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		return
 	}
 	
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
-	err := decoder.Decode(&params)
+	err = decoder.Decode(&params)
 	if err != nil {
 		respondWithError(w, 400, "Invalid request")
 		return
@@ -190,10 +227,10 @@ func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 	// Clean profanity
 	cleanedBody := cleanProfanity(params.Body)
 	
-	// Create chirp in database
+	// Create chirp with authenticated user's ID
 	dbChirp, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
 		Body:   cleanedBody,
-		UserID: params.UserID,
+		UserID: userID,
 	})
 	if err != nil {
 		respondWithError(w, 500, "Failed to create chirp")
@@ -211,6 +248,7 @@ func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 	
 	respondWithJSON(w, 201, chirp)
 }
+
 
 func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 	dbChirps, err := cfg.db.GetAllChirps(r.Context())
@@ -346,6 +384,11 @@ func main() {
 		log.Fatal("PLATFORM environment variable is not set")
 	}
 	
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET environment variable is not set")
+	}
+	
 	// Open database connection
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
@@ -355,10 +398,11 @@ func main() {
 	// Create database queries
 	dbQueries := database.New(db)
 	
-	// Initialize config with database
+	// Initialize config with database and JWT secret
 	apiCfg := &apiConfig{
-		db:       dbQueries,
-		platform: platform,
+		db:        dbQueries,
+		platform:  platform,
+		jwtSecret: jwtSecret,
 	}
 	
 	mux := http.NewServeMux()
@@ -392,6 +436,7 @@ func main() {
 	log.Printf("Starting server on %s", server.Addr)
 	server.ListenAndServe()
 }
+
 
 
 
