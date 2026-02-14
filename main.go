@@ -1,10 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
+
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
@@ -38,6 +42,71 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func respondWithError(w http.ResponseWriter, code int, msg string) {
+	type errorResponse struct {
+		Error string `json:"error"`
+	}
+	respondWithJSON(w, code, errorResponse{Error: msg})
+}
+
+func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Error marshalling JSON: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+	w.Write(data)
+}
+
+func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Body string `json:"body"`
+	}
+	type responseBody struct {
+		CleanedBody string `json:"cleaned_body"`
+	}
+	
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 400, "Something went wrong")
+		return
+	}
+	
+	// Validate chirp length
+	if len(params.Body) > 140 {
+		respondWithError(w, 400, "Chirp is too long")
+		return
+	}
+	
+	// Clean profanity and respond
+	cleaned := cleanProfanity(params.Body)
+	respondWithJSON(w, 200, responseBody{CleanedBody: cleaned})
+}
+
+
+func cleanProfanity(text string) string {
+	badWords := map[string]bool{
+		"kerfuffle": true,
+		"sharbert":  true,
+		"fornax":    true,
+	}
+	
+	words := strings.Split(text, " ")
+	for i, word := range words {
+		lowercaseWord := strings.ToLower(word)
+		if badWords[lowercaseWord] {
+			words[i] = "****"
+		}
+	}
+	
+	return strings.Join(words, " ")
+}
+
 
 func main() {
 	apiCfg := &apiConfig{}
@@ -50,6 +119,8 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
+	
+	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 	
 	// Admin endpoints
 	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerMetrics)
@@ -66,6 +137,7 @@ func main() {
 	
 	server.ListenAndServe()
 }
+
 
 
 
