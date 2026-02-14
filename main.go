@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -317,8 +318,14 @@ func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 
 
 func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
-	// Get optional author_id query parameter
+	// Get optional query parameters
 	authorIDStr := r.URL.Query().Get("author_id")
+	sortOrder := r.URL.Query().Get("sort")
+	
+	// Default to ascending if not specified
+	if sortOrder == "" {
+		sortOrder = "asc"
+	}
 	
 	var dbChirps []database.Chirp
 	var err error
@@ -353,8 +360,18 @@ func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	
+	// Sort chirps based on sort parameter
+	sort.Slice(chirps, func(i, j int) bool {
+		if sortOrder == "desc" {
+			return chirps[i].CreatedAt.After(chirps[j].CreatedAt)
+		}
+		// Default to ascending
+		return chirps[i].CreatedAt.Before(chirps[j].CreatedAt)
+	})
+	
 	respondWithJSON(w, 200, chirps)
 }
+
 
 
 func (cfg *apiConfig) handlerUpdateUser(w http.ResponseWriter, r *http.Request) {
